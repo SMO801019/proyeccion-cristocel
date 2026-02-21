@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Calculadora de Comisiones Cristocel</title>
+  <style>
+    :root { font-family: Arial, sans-serif; color-scheme: light; }
+    body { margin: 0; background:#f5f7fb; color:#1b2230; }
+    .container { max-width: 1200px; margin: 0 auto; padding: 24px; }
+    h1 { margin-top: 0; }
+    .card { background:white; border-radius: 12px; padding: 16px; box-shadow: 0 2px 12px rgba(0,0,0,.08); margin-bottom: 16px; }
+    .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(220px,1fr)); gap:12px; }
+    label { font-size: 14px; display:block; margin-bottom:4px; font-weight:600; }
+    input, select, button { width:100%; padding:8px; border:1px solid #c8d1e0; border-radius: 8px; font-size:14px; }
+    button { cursor:pointer; background:#1f6feb; color:white; border:none; font-weight:700; }
+    button.secondary { background:#4f5d75; }
+    table { width:100%; border-collapse: collapse; font-size: 13px; }
+    th, td { border:1px solid #d8dfeb; padding:6px; text-align:right; }
+    th { background:#eef3ff; }
+    td:first-child, th:first-child { text-align:center; }
+    .small { font-size:12px; color:#51607a; }
+    .pill { display:inline-block; padding:2px 8px; border-radius:999px; background:#e8f5e9; color:#1b5e20; font-size:12px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Calculadora de comisiones (Nuevas y Portabilidad)</h1>
+    <div class="card">
+      <div class="grid">
+        <div>
+          <label for="modelo">Modelo de comisión</label>
+          <select id="modelo">
+            <option value="1">Modelo 1 (80/80/40/20/40/20/5/5)</option>
+            <option value="2">Modelo 2 (60/60/10/10/70/5/5/5)</option>
+          </select>
+        </div>
+        <div>
+          <label for="recarga">Recarga mensual promedio por usuario ($)</label>
+          <input id="recarga" type="number" min="0" step="1" value="150" />
+        </div>
+        <div>
+          <label for="iva">IVA (%)</label>
+          <input id="iva" type="number" min="0" step="0.01" value="16" />
+        </div>
+        <div>
+          <label for="baseVenta">Simular ventas base por mes</label>
+          <input id="baseVenta" type="number" min="0" step="1" value="100" />
+        </div>
+        <div>
+          <label for="crecimiento">Crecimiento mensual en simulación (%)</label>
+          <input id="crecimiento" type="number" step="0.1" value="2" />
+        </div>
+        <div style="display:flex; align-items:end; gap:8px;">
+          <button id="simularBtn" class="secondary">Simular 12 meses</button>
+          <button id="calcularBtn">Calcular</button>
+        </div>
+      </div>
+      <p class="small">
+        Supuestos: bono de activación $40 por alta, bono extra de $100 por portabilidad, comisión fija de $100 por alta, costo de SIM $45 por alta.
+        Degradación de cartera por cohorte: mes 2 = 50% de mes 1; desde mes 3 se degrada 5% mensual sobre el mes anterior.
+      </p>
+    </div>
+
+    <div class="card">
+      <h3>Ventas por mes (12 meses)</h3>
+      <table id="ventasTable">
+        <thead>
+          <tr><th>Mes</th><th>Ventas (SIM)</th><th>% Portabilidad</th><th>Líneas nuevas</th><th>Portabilidades</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h3>Flujo mensual (mes de cobro)</h3>
+      <table id="flujoTable">
+        <thead>
+          <tr><th>Mes</th><th>Ingreso activación neto</th><th>Comisión recarga + IVA</th><th>Total flujo</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <p id="totales" class="pill"></p>
+    </div>
+
+    <div class="card">
+      <h3>Detalle por cohorte de venta (cartera 8 meses)</h3>
+      <table id="cohortesTable">
+        <thead>
+          <tr>
+            <th>Mes venta</th><th>Ventas</th>
+            <th>M1</th><th>M2</th><th>M3</th><th>M4</th><th>M5</th><th>M6</th><th>M7</th><th>M8</th>
+            <th>Total comisión + IVA</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+<script>
+const MODELOS = {
+  1: [0.80, 0.80, 0.40, 0.20, 0.40, 0.20, 0.05, 0.05],
+  2: [0.60, 0.60, 0.10, 0.10, 0.70, 0.05, 0.05, 0.05]
+};
+
+function money(v){ return v.toLocaleString('es-MX',{style:'currency', currency:'MXN', maximumFractionDigits:2}); }
+
+function factorUsuarios(mesCartera){
+  if(mesCartera === 1) return 1;
+  if(mesCartera === 2) return 0.5;
+  return 0.5 * Math.pow(0.95, mesCartera - 2);
+}
+
+function crearTablaVentas(){
+  const tbody = document.querySelector('#ventasTable tbody');
+  tbody.innerHTML = '';
+  for(let m=1;m<=12;m++){
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${m}</td>
+      <td><input type="number" min="0" step="1" value="100" data-mes="${m}" data-type="ventas"></td>
+      <td><input type="number" min="0" max="100" step="1" value="30" data-mes="${m}" data-type="porta"></td>
+      <td data-out="nuevas-${m}">0</td>
+      <td data-out="porta-${m}">0</td>
+    `;
+    tbody.appendChild(tr);
+  }
+}
+
+function simularVentas(){
+  const base = Number(document.getElementById('baseVenta').value) || 0;
+  const growth = (Number(document.getElementById('crecimiento').value) || 0) / 100;
+  for(let m=1;m<=12;m++){
+    const v = Math.max(0, Math.round(base * Math.pow(1+growth, m-1) + (Math.random()*12-6)));
+    const p = Math.max(0, Math.min(100, Math.round(28 + Math.random()*14)));
+    document.querySelector(`input[data-mes='${m}'][data-type='ventas']`).value = v;
+    document.querySelector(`input[data-mes='${m}'][data-type='porta']`).value = p;
+  }
+  calcular();
+}
+
+function calcular(){
+  const modelo = document.getElementById('modelo').value;
+  const porcentajes = MODELOS[modelo];
+  const recarga = Number(document.getElementById('recarga').value) || 0;
+  const iva = (Number(document.getElementById('iva').value) || 0)/100;
+
+  const flujo = Array.from({length:12}, (_,i)=>({mes:i+1, activacion:0, recarga:0}));
+  const cohortes = [];
+
+  for(let m=1;m<=12;m++){
+    const ventas = Number(document.querySelector(`input[data-mes='${m}'][data-type='ventas']`).value) || 0;
+    const pctPorta = (Number(document.querySelector(`input[data-mes='${m}'][data-type='porta']`).value) || 0)/100;
+    const portabilidades = ventas * pctPorta;
+    const nuevas = ventas - portabilidades;
+
+    document.querySelector(`[data-out='nuevas-${m}']`).textContent = nuevas.toFixed(0);
+    document.querySelector(`[data-out='porta-${m}']`).textContent = portabilidades.toFixed(0);
+
+    const ingresoActivacion = ventas*40 + portabilidades*100 + ventas*100;
+    const costo = ventas*45;
+    flujo[m-1].activacion += (ingresoActivacion - costo);
+
+    const detalleMeses = [];
+    let totalCohorte = 0;
+    for(let k=1;k<=8;k++){
+      const usuariosActivos = ventas * factorUsuarios(k);
+      const recargaAcum = usuariosActivos * recarga;
+      const comision = recargaAcum * porcentajes[k-1];
+      const comisionConIva = comision * (1+iva);
+      detalleMeses.push(comisionConIva);
+      totalCohorte += comisionConIva;
+
+      const mesPago = m + k;
+      if(mesPago <= 12){
+        flujo[mesPago-1].recarga += comisionConIva;
+      }
+    }
+
+    cohortes.push({mes:m, ventas, detalleMeses, totalCohorte});
+  }
+
+  const flujoBody = document.querySelector('#flujoTable tbody');
+  flujoBody.innerHTML = '';
+  let total = 0;
+  for(const row of flujo){
+    const totalMes = row.activacion + row.recarga;
+    total += totalMes;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${row.mes}</td><td>${money(row.activacion)}</td><td>${money(row.recarga)}</td><td>${money(totalMes)}</td>`;
+    flujoBody.appendChild(tr);
+  }
+
+  const cohortesBody = document.querySelector('#cohortesTable tbody');
+  cohortesBody.innerHTML = '';
+  for(const c of cohortes){
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${c.mes}</td><td>${c.ventas.toFixed(0)}</td>${c.detalleMeses.map(v=>`<td>${money(v)}</td>`).join('')}<td>${money(c.totalCohorte)}</td>`;
+    cohortesBody.appendChild(tr);
+  }
+
+  document.getElementById('totales').textContent = `Total flujo estimado de 12 meses: ${money(total)}`;
+}
+
+document.getElementById('simularBtn').addEventListener('click', simularVentas);
+document.getElementById('calcularBtn').addEventListener('click', calcular);
+crearTablaVentas();
+calcular();
+</script>
+</body>
+</html>
